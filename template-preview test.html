@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>默认模板预览 · HTML PPT Editor</title>
+<style>
+  :root{--bg:#1B1D21;--card:#26292F;--line:#343841;--ink:#E6E9EF;--dim:#8A929E}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.6 'PingFang SC','Microsoft YaHei',Segoe UI,sans-serif}
+  header{padding:28px 32px 18px;border-bottom:1px solid var(--line)}
+  h1{margin:0 0 8px;font-size:20px;font-weight:600}
+  .sub{color:var(--dim);font-size:13px}
+  .palette{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}
+  .sw{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);
+      border-radius:6px;padding:6px 12px 6px 6px;font-size:12px}
+  .sw i{width:26px;height:26px;border-radius:4px;display:block}
+  .sw b{font-weight:600}
+  .sw span{color:var(--dim);font-family:Consolas,monospace}
+  .tools{display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap}
+  button,select{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:5px;
+                padding:6px 12px;font:inherit;cursor:pointer}
+  button:hover{background:#2F333B}
+  main{padding:24px 32px 60px;display:grid;grid-template-columns:repeat(auto-fill,minmax(430px,1fr));gap:22px}
+  .item{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .item h2{margin:0;padding:9px 14px;font-size:12px;font-weight:600;border-bottom:1px solid var(--line);
+           display:flex;align-items:center;gap:10px}
+  .item h2 em{font-style:normal;color:var(--dim);font-weight:400;font-family:Consolas,monospace;font-size:11px}
+  .item .frame{position:relative;width:100%;aspect-ratio:16/9;background:#fff;overflow:hidden}
+  .item iframe{position:absolute;top:0;left:0;border:0;transform-origin:0 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>默认模板 · 15 个版式</h1>
+  <div class="sub">
+    层级靠字号与字重拉开，分段靠整屏底色切换（纸白 ↔ 近黑），不画分隔线、不加卡片边框、不做标签徽章。<br>
+    所有颜色都写成主题引用（<code>theme:--ps-*</code>），换配色时整套模板自动跟随 —— 下面的取色器可以现场验证。
+  </div>
+  <div class="palette" id="palette"></div>
+  <div class="tools">
+    <button id="reset">恢复指定配色</button>
+    <label style="color:var(--dim);font-size:12px">试换主色：</label>
+    <input type="color" id="pick" value="#2A75AE" style="width:44px;height:30px;padding:2px;background:var(--card);border:1px solid var(--line);border-radius:5px">
+    <span class="sub" id="hint"></span>
+  </div>
+</header>
+<main id="grid"></main>
+
+<script>
+(function () {
+  var v = '?v=' + Date.now();
+  ['src/js/core/util.js','src/js/core/model.js','src/assets/shapes.js','src/js/core/render.js',
+   'src/js/core/parser.js','src/js/core/serializer.js','src/runtime/template.js',
+   'src/js/feature/template-default.js'
+  ].forEach(function (s) { document.write('<script src="' + s + v + '"><\/script>'); });
+})();
+</script>
+<script>
+(function () {
+  var M = PS.model;
+  /* 这个预览页不跑编辑器，自己造一份最小 store 供模板读取尺寸与主题 */
+  var deck = M.newDeck({ title: '模板预览' });
+  deck.css = PS.template.css;
+  deck.runtime = PS.template.js;
+  PS.store = PS.store || {};
+  PS.store.deck = deck;
+  PS.store.state = { deck: deck };
+
+  var NAMED = [
+    ['主色1', '--ps-accent'], ['主色2', '--ps-info'], ['主色3', '--ps-accent-mid'],
+    ['次色1', '--ps-good'], ['次色2', '--ps-ink-4']
+  ];
+
+  function paintPalette() {
+    document.getElementById('palette').innerHTML = NAMED.map(function (p) {
+      var c = deck.theme[p[1]];
+      return '<div class="sw"><i style="background:' + c + '"></i><b>' + p[0] + '</b><span>' + c + '</span></div>';
+    }).join('');
+  }
+
+  function css() {
+    return deck.css + '\n' + PS.serializer.themeOverrideCSS(deck) + '\n' + PS.render.CANVAS_CSS +
+      '\nhtml,body{height:100%!important;margin:0!important;overflow:hidden!important}.deck{width:100%;height:100%}' +
+      '\n.slide{transition:none!important;opacity:1!important;transform:none!important}';
+  }
+
+  function render() {
+    var grid = document.getElementById('grid');
+    grid.innerHTML = '';
+    PS.templates.LAYOUTS.filter(function (L) { return L.key !== 'blank'; }).forEach(function (L) {
+      var s = M.newSlide({ mode: 'canvas' });
+      PS.templates.apply(s, L.key, deck);
+
+      var item = document.createElement('div');
+      item.className = 'item';
+      item.innerHTML = '<h2>' + L.name + '<em>' + L.key + '</em></h2><div class="frame"></div>';
+      grid.appendChild(item);
+
+      var box = item.querySelector('.frame');
+      var f = document.createElement('iframe');
+      f.setAttribute('scrolling', 'no');
+      box.appendChild(f);
+      /* 不用 requestAnimationFrame：标签页不在前台时它会被节流，帧就一直是空白的 */
+      draw();
+      setTimeout(draw, 60);
+
+      function draw() {
+        var W = deck.size.w, H = deck.size.h, k = box.clientWidth / W;
+        if (!box.clientWidth) { setTimeout(draw, 60); return; }
+        f.style.width = W + 'px'; f.style.height = H + 'px';
+        f.style.transform = 'scale(' + k + ')';
+        var d = f.contentDocument;
+        d.open();
+        d.write('<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + css() +
+          '</style></head><body><div class="deck"><section class="' + (s.classes || ['slide']).join(' ') +
+          ' is-active" data-mode="canvas">' +
+          PS.render.slideInnerHTML(s, deck) + '</section></div></body></html>');
+        d.close();
+        Array.prototype.forEach.call(d.querySelectorAll('.ps-canvas'), function (c) {
+          c.style.setProperty('--ps-k', 1);
+        });
+      }
+    });
+    paintPalette();
+  }
+
+  /* 换主色 → 按明度关系重算整条强调色阶，验证「改一处全局跟随」 */
+  document.getElementById('pick').addEventListener('input', function () {
+    var base = this.value;
+    deck.theme['--ps-accent'] = base;
+    deck.theme['--ps-accent-strong'] = PS.util.shade(base, -0.2);
+    deck.theme['--ps-accent-mid'] = PS.util.shade(base, 0.22);
+    deck.theme['--ps-accent-soft'] = PS.util.shade(base, 0.72);
+    deck.theme['--ps-accent-wash'] = PS.util.shade(base, 0.93);
+    deck.theme['--ps-accent-deep'] = PS.util.shade(base, -0.55);
+    document.getElementById('hint').textContent = '整套模板已跟随重绘，没有一处写死的颜色';
+    render();
+  });
+  document.getElementById('reset').addEventListener('click', function () {
+    deck.theme = PS.util.assign({}, M.DEFAULT_THEME);
+    document.getElementById('pick').value = deck.theme['--ps-accent'];
+    document.getElementById('hint').textContent = '';
+    render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
